@@ -2,6 +2,11 @@
 
 Execute arbitrary commands when a tag is read.
 
+#### Usage
+```
+python3 rfid_macros.py commands.yaml -d /dev/input/by-id/usb-Some_RFID_Reader_event-kbd
+```
+
 #### Commands YAML Example
 ```
 "0000000008": notify-send $(curl -s https://blockchain.info/ticker | jq -r '.USD."15m"')
@@ -11,13 +16,6 @@ Execute arbitrary commands when a tag is read.
 "0000000010":
   send_key: SPACE
 ```
-
-
-#### Usage
-```
-python3 rfid_macros.py commands.yaml -d /dev/input/by-id/usb-Some_RFID_Reader_event-kbd
-```
-
 
 #### Avoid running as root
 

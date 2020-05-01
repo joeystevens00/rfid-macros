@@ -3,11 +3,13 @@ import asyncio
 import evdev
 from evdev import UInput, ecodes as e
 import yaml
+import functools
+from collections import defaultdict
 
 from typing import Iterable
 
 TASKS = {}
-
+CONFIG = defaultdict(lambda: {'mode': 'async'})
 
 async def shell_exec(cmd):
     proc = await asyncio.create_subprocess_shell(
@@ -23,23 +25,32 @@ def shell_exec_future(cmd):
     asyncio.ensure_future(shell_exec(cmd))
 
 
-def generate_kb_input(keys=None):
+async def generate_kb_input(keys=None):
     if not keys:
         raise ValueError("Can't iterate over nothing")
     ui = UInput()
     for k in keys:
-        if isinstance(k, str):
-            k = e.__getattribute__(k)
-        ui.write(e.EV_KEY, k, 1)
-        ui.write(e.EV_KEY,k, 0)
-        ui.syn()
+        if isinstance(k, str) and ',' in k:
+            for state in [1, 0]:
+                for kk in k.split(','):
+                    kk = e.__getattribute__('KEY_' + kk)
+                    print("SENDING KEY", kk)
+                    ui.write(e.EV_KEY, kk, state)
+                ui.syn()
+        else:
+            if isinstance(k, str):
+                k = e.__getattribute__('KEY_' + k)
+            print("SENDING KEY", k)
+            ui.write(e.EV_KEY, k, 1)
+            ui.write(e.EV_KEY,k, 0)
+            ui.syn()
     ui.close()
 
 
 async def execute_task(line):
     task = TASKS.get(line)
     if task:
-        task()
+        await task()
     else:
         print(f"Task not found {line}")
 
@@ -59,29 +70,35 @@ async def read_device(device):
                         read_line=''
 
 
-def parse_macros_function(func: dict):
+async def parse_macros_function(func: dict, task_id: str):
     if func.get('send_key'):
-        return lambda: generate_kb_input(['KEY_' + func['send_key']])
+        return await generate_kb_input([func['send_key']])
+    if func.get('sleep'):
+        return await asyncio.sleep(func['sleep'])
+    if func.get('mode'):
+        CONFIG[task_id]['mode'] = func['mode']
 
 
-def parse_macro_command(command):
+async def parse_macro_command(command, task_id):
+    print(command)
     if isinstance(command, str):
-        return lambda: shell_exec_future(command)
+        return await shell_exec(command)
     elif isinstance(command, dict):
-        return parse_macros_function(command)
+        return await parse_macros_function(command, task_id)
     elif isinstance(command, Iterable):
-        commands = []
-        for v in command:
-            commands.append(parse_macro_command(v))
-        def command_func():
-            for c in commands:
-                c()
-        return command_func
+        async def command_func():
+            for v in command:
+                coro = parse_macro_command(v, task_id)
+                if CONFIG[task_id]['mode'] == 'async':
+                    asyncio.create_task(coro)
+                else:
+                    await coro
+        return await command_func()
 
 
 def parse_macros(macros: dict):
     for task_id, command in macros.items():
-        TASKS[task_id] = parse_macro_command(command)
+        TASKS[task_id] = functools.partial(parse_macro_command, command=command, task_id=task_id)
 
 
 def main():
